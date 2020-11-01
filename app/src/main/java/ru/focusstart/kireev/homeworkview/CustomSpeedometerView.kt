@@ -2,13 +2,11 @@ package ru.focusstart.kireev.homeworkview
 
 import android.animation.AnimatorSet
 import android.animation.ArgbEvaluator
-import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.*
 import android.util.AttributeSet
 import android.view.View
-import android.view.animation.AccelerateDecelerateInterpolator
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
@@ -22,7 +20,7 @@ class CustomSpeedometerView @JvmOverloads constructor(
 ) : View(context, attributeSet, defStyleAttr, defStyleRes) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val shaderPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private var size = 400
+    private var size = 550
     private var centerPoint by Delegates.notNull<Float>()
     private var outerEdgingBorderWidth by Delegates.notNull<Float>()
     private var bigCircleRadius by Delegates.notNull<Float>()
@@ -32,27 +30,25 @@ class CustomSpeedometerView @JvmOverloads constructor(
     private var textSize by Delegates.notNull<Float>()
     private var textWidth by Delegates.notNull<Float>()
     private var bgColor = Color.BLACK
+    private var animateDrive = AnimatorSet()
+    private val animateStopDrive = AnimatorSet()
 
     private var arrowColor = Color.BLACK
         set(value) {
             field = value
-            invalidate()
         }
     private var segmentsColor = Color.parseColor("#B2FF59")
     private var outerEdgingColor = Color.GRAY
 
-    private var currentSpeed = 0
-        set(value) {
-            field = value
-            invalidate()
-        }
+    private var currentSpeed by Delegates.notNull<Int>()
+
 
     private val degreesForSegments =
         listOf(150, 165, 180, 195, 210, 225, 240, 255, 270, 285, 300, 315, 330, 345, 360, 15, 30)
     private val textOfSpeedForSegments =
         listOf("0", "20", "40", "60", "80", "100", "120", "140", "160")
-    private lateinit var pointsForTextSpeed: List<Pair<Float, Float>>
-    private lateinit var pointsOfSegment: List<Pair<Pair<Float, Float>, Pair<Float, Float>>>
+    private lateinit var pointsForTextSpeed: List<Degrees>
+    private lateinit var pointsOfSegment: List<Pair<Degrees, Degrees>>
 
     init {
         val typedArray = context.obtainStyledAttributes(
@@ -73,18 +69,30 @@ class CustomSpeedometerView @JvmOverloads constructor(
     }
 
     fun drive() {
-        when {
-            currentSpeed < 40 -> animateArrow(8000, 40, 35, 80, 75, 120, 115, 160)
-            currentSpeed < 80 -> animateArrow(4000, 80, 75, 120, 115, 160)
-            currentSpeed < 120 -> animateArrow(3000, 120, 115, 160)
-            else -> animateArrow(2000, 160)
+        when (currentSpeed) {
+            in 0..40 ->
+                animateArrow(8000, 40, 35, 80, 75, 120, 115, 160)
+
+            in 41..80 ->
+                animateArrow(4000, 80, 75, 120, 115, 160)
+
+            in 81..120 ->
+                animateArrow(3000, 120, 115, 160)
+
+            else ->
+                animateArrow(2000, 160)
+
         }
     }
 
     private fun animateArrow(duration: Long, vararg speed: Int) {
+        if (animateStopDrive.isRunning) {
+            animateStopDrive.cancel()
+        }
         val animArrow = ValueAnimator.ofInt(currentSpeed, *speed).apply {
             addUpdateListener {
                 currentSpeed = this.animatedValue as Int
+                invalidate()
             }
             this.duration = duration
         }
@@ -97,27 +105,37 @@ class CustomSpeedometerView @JvmOverloads constructor(
                     arrowColor = color
                 }
             }
-            this.duration = duration
+            this.duration = (duration * 1.3).toLong()
         }
-
-        val animatorSet = AnimatorSet()
-        animatorSet.play(animArrow)
+        animateDrive = AnimatorSet()
+        animateDrive.play(animArrow)
             .with(animArrowColor)
-        animatorSet.start()
+        animateDrive.start()
     }
 
     fun stopDrive() {
-        val animArrow = ObjectAnimator.ofInt(this, "currentSpeed", currentSpeed, 0).apply {
-            duration = 4000
+        if (animateDrive.isRunning) {
+            animateDrive.cancel()
         }
-        val animColor = ObjectAnimator.ofInt(this, "arrowColor", arrowColor, Color.BLACK).apply {
+        val animArrow = ValueAnimator.ofInt(currentSpeed, 0).apply {
+            addUpdateListener {
+                currentSpeed = this.animatedValue as Int
+                invalidate()
+            }
+            this.duration = 4000
+        }
+        val animColor = ValueAnimator.ofInt(arrowColor, Color.BLACK).apply {
             duration = 2000
             setEvaluator(ArgbEvaluator())
+            addUpdateListener {
+                val color = this.animatedValue as Int
+                arrowColor = color
+            }
         }
-        val animatorSet = AnimatorSet()
-        animatorSet.play(animArrow)
+
+        animateStopDrive.play(animArrow)
             .with(animColor)
-        animatorSet.start()
+        animateStopDrive.start()
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -155,6 +173,7 @@ class CustomSpeedometerView @JvmOverloads constructor(
         textSize = size * 0.06f
         textWidth = thicknessLines / 3
         shaderPaint.shader = createShader()
+        currentSpeed = 0
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -211,25 +230,25 @@ class CustomSpeedometerView @JvmOverloads constructor(
     private fun calculateCoordinatesForSegments(
         firstRadius: Float,
         secondRadius: Float
-    ): List<Pair<Pair<Float, Float>, Pair<Float, Float>>> {
-        val mutableList = mutableListOf<Pair<Pair<Float, Float>, Pair<Float, Float>>>()
+    ): List<Pair<Degrees, Degrees>> {
+        val mutableList = mutableListOf<Pair<Degrees, Degrees>>()
         for (degree in degreesForSegments) {
             val startX = calculatePoint(firstRadius, true, degree)
             val startY = calculatePoint(firstRadius, false, degree)
             val endX = calculatePoint(secondRadius, true, degree)
             val endY = calculatePoint(secondRadius, false, degree)
-            mutableList.add(Pair(Pair(startX, startY), Pair(endX, endY)))
+            mutableList.add(Pair(Degrees(startX, startY), Degrees(endX, endY)))
         }
         return mutableList
     }
 
-    private fun calculateCoordinatesForText(radius: Float): List<Pair<Float, Float>> {
+    private fun calculateCoordinatesForText(radius: Float): List<Degrees> {
         val mutableList = mutableListOf<Pair<Float, Float>>()
         for ((index, degree) in degreesForSegments.withIndex()) {
             if (index % 2 == 0) {
                 val x = calculatePoint(radius, true, degree)
                 val y = calculatePoint(radius, false, degree)
-                mutableList.add(Pair(x, y))
+                mutableList.add(Degrees(x, y))
             }
         }
         return mutableList
@@ -265,3 +284,5 @@ class CustomSpeedometerView @JvmOverloads constructor(
         return degree
     }
 }
+
+typealias Degrees = Pair<Float, Float>
